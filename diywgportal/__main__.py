@@ -49,9 +49,8 @@ def main():
   if args.verbose:
     logging.getLogger().setLevel(logging.DEBUG)
   logging.log(logging.DEBUG, args)
+  print_config(args.config)
   SETTINGS.set("Debug", "dry_run", str(args.dry_run))
-
-  # print_config(args.config)
   
   dbPath = Path(SETTINGS.get("Peers", "database_path")).absolute()
   logging.log(logging.DEBUG, f"database path: {dbPath}")
