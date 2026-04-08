@@ -21,6 +21,7 @@ Notes:
   It does NOT edit /etc/wireguard/<iface>.conf.
 """
 
+import logging
 import os
 import threading
 import time
@@ -117,6 +118,56 @@ def worker():
         except Exception as ex:
             print(f"[expiry] ERROR: scan failed: {ex}")
         time.sleep(int(SETTINGS.get("Watchdog", "WATCH_INTERVAL_SECONDS")))
+
+import json, ipaddress
+# ip: 10.112.111.1
+def get_wireguard_interface_name_if_ip_on_wireguard_interface(ip):
+    proc = wg.run(cmd=["ip", "-details", "-j", "addr", "show"])
+    interfaces = json.loads(proc.stdout)
+    for intf in interfaces:
+        if "linkinfo" in intf:
+            info = intf["linkinfo"]
+            if "info_kind" in info:
+                kind = info["info_kind"]
+                if kind == "wireguard":
+                    if "addr_info" in intf:
+                        addr_infos = intf["addr_info"]
+                        for addr_info in addr_infos:
+                            if 'local' in addr_info:
+                                local = addr_info['local']
+                                # TODO this assumes /24 'the least strict type of network'
+                                net = ipaddress.ip_network(f"{local}/24", strict=False)
+                                if ipaddress.ip_address(ip) in net:
+                                    return intf["ifname"]
+    return None
+
+def get_endpoint_ip_on_wireguard_interface(interface: str, ip: str):
+    """returns ip:port for an interface and a wireguarded ip address"""
+    pubk_ipport_dict = wg.get_current_peers(interface=interface)
+    pubk_address_dict = wg.get_allowed_ips(interface=interface, with_slash=False)
+    pubk = None
+    for candidateP, address in pubk_address_dict.items():
+        if address == ip:
+            pubk = candidateP
+            break
+    else:
+        return None
+    if pubk not in pubk_ipport_dict:
+        return None
+    v = pubk_ipport_dict[pubk]
+    if v is None:
+        return None
+    return v.split(":", 2)[0]
+
+def get_endpoint_ip_for_ip(ip: str):
+    logging.log(logging.DEBUG, f"get_endpoint_ip_for_ip({ip})")
+    if not ipaddress.ip_address(ip) in ipaddress.ip_network("10.0.0.0/8"):
+        # Assumes remote ip already
+        return ip
+    intf = get_wireguard_interface_name_if_ip_on_wireguard_interface(ip)
+    if not intf:
+        return None
+    return get_endpoint_ip_on_wireguard_interface(interface=intf, ip=ip)
 
 def main():
     t = threading.Thread(target=worker, name="expiry-watchdog", daemon=True)

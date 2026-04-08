@@ -29,6 +29,7 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from diywgportal.peers import get_peer_id, update_peer
 from diywgportal.settings import SETTINGS
 from diywgportal.watchdog import _parse_created_at
 from diywgportal.wg import get_current_peers
@@ -70,7 +71,10 @@ def fetch_desired_peers(conn: sqlite3.Connection, interface: str):
                 "persistent_keepalive": None if keep is None or keep == -1 else int(keep),
                 "client_ip": client_ip,
                 "name": name,
+                "permanent": permanent,
             }
+        else:
+            logging.log(logging.DEBUG, f"peer: {pub} is not desired because not permanent and timeout")
     return desired
 
 def sync_db_to_wg(conn: sqlite3.Connection, interface: str):
@@ -78,17 +82,30 @@ def sync_db_to_wg(conn: sqlite3.Connection, interface: str):
 
     desired = fetch_desired_peers(conn, interface)
     currentKeyIPs = get_current_peers(interface)
-    for pubk, ip in currentKeyIPs.items():
-        if ip:
+    for pubk, remote_ip in currentKeyIPs.items():
+        if remote_ip:
+            remote_ip = remote_ip.split(":", 2)[0]
             if pubk in desired and desired[pubk]['client_ip']:
-                old_ip = desired[pubk]['client_ip']
-                if ip != old_ip:
-                    # TODO: currently does not work because people sign up in the 10.112.111.0/24 space but connect with their remote IP
-                    #logging.log(logging.DEBUG, f"removing client from desired as IP changed: {pubk}: old ip: {old_ip} new ip: {ip}")
-                    #del desired[pubk]
-                    pass
+                if desired[pubk]['permanent']:
+                    # permanent entries can change remote ip address (?)
+                    continue
+                registered_remote_ip = desired[pubk]['client_ip']
+                if registered_remote_ip != remote_ip:
+                    logging.log(logging.WARNING, f"removing client from desired as IP changed: {pubk}: registered ip: {registered_remote_ip} new ip: {remote_ip}")
+                    # update database to set the user to disabled to simulate a "kick"
+                    # the reason is that otherwise it appears in the desired peers list
+                    # and since it was disconnected it isn't in the endpoints list anymore...
+                    # so it otherwise gets added again
+                    peer_id = get_peer_id(conn=conn, interface=interface, name=desired[pubk]['name'])
+                    if not peer_id:
+                        logging.log(logging.WARNING, f"did not blacklist {pubk}")
+                    else:    
+                        update_peer(conn=conn, interface=interface,id=peer_id,enabled=False)
+                    del desired[pubk]
     current = set(currentKeyIPs.keys())
     desired_set = set(desired.keys())
+    logging.log(logging.DEBUG, f"current: {' '.join(current)}")    
+    logging.log(logging.DEBUG, f"desired: {' '.join(desired_set)}")
     to_add = desired_set - current
 
     # Remove anything not desired/enabled in DB

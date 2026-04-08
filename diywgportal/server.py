@@ -46,6 +46,7 @@ from html import escape
 
 from diywgportal.accounts import fetch_accounts
 from diywgportal.management import sync_db_to_wg
+from diywgportal.watchdog import get_endpoint_ip_for_ip
 
 # Local modules from earlier answers
 from . import wg
@@ -285,7 +286,7 @@ def render_form(error: str = "") -> bytes:
 <p class="muted">Tap your YubiKey to generate a one-time password and press “Get VPN”.</p>
 {err}
 <form method="POST" action="/">
-  <div>
+  <div class="row">
     <label for="otp">YubiKey OTP</label><br/>
     <input type="text" id="otp" name="otp" autofocus="autofocus" placeholder="cccccc...djgkktfgrh" required>
   </div>
@@ -419,9 +420,11 @@ class Portal(BaseHTTPRequestHandler):
             self._raw(404, b"text/plain; charset=utf-8", b"Not found\n")
             return
         
-        # TODO: register client_ip so the endpoint can only be that
-        # and of course make the watch dog check against this!
+        # Fetch a remote_ip if possible
         client_ip, client_port = self.client_address
+        remote_ip = get_endpoint_ip_for_ip(ip=client_ip)
+        if remote_ip:
+            client_ip = remote_ip
 
         # parse form
         length = int(self.headers.get("Content-Length", "0") or "0")
@@ -506,6 +509,7 @@ class Portal(BaseHTTPRequestHandler):
                 public_key=cli_pub,
                 preshared_key=psk,
                 allowed_ips=assigned,
+                created_at=peers.now_string(),
                 persistent_keepalive=int(SETTINGS.get("Peers", "keep_alive_seconds")) if SETTINGS.getboolean("Peers", "configure_keep_alive") else None,
                 enabled=True,
                 client_ip=client_ip,
