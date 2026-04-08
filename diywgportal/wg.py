@@ -268,7 +268,31 @@ def get_current_peers_pubkeys(interface: str) -> set[str]:
         return set([line.strip() for line in out.splitlines() if line.strip()])
     except subprocess.CalledProcessError as ex:
         raise SystemExit(f"wg show failed for {interface}: {ex.stderr or ex}")
-    
+
+def get_allowed_ips(interface: str, with_slash=False) -> Dict[str, str]:
+    """
+    Return set of public keys currently configured on the interface.
+    Works with: wg show <iface> endpoints
+    """
+    # pubkeys = []
+    # try:
+    #     out = run(["wg", "show", interface, "peers"]).stdout.strip()
+    #     pubkeys += set([line.strip() for line in out.splitlines() if line.strip()])
+    # except subprocess.CalledProcessError as ex:
+    #     raise SystemExit(f"wg show failed for {interface}: {ex.stderr or ex}")
+    # TODO: handl logic here to fetch client ip from the device
+    try:
+        out = run(["wg", "show", interface, "allowed-ips"]).stdout.strip()
+        pubkeyEndpointPairs = [line.strip().split("\t", 2) for line in out.splitlines() if line.strip()]
+        if with_slash:
+            result = dict((entry[0], entry[1]) for entry in pubkeyEndpointPairs)
+        else:
+            result = dict((entry[0], entry[1].split("/", 2)[0]) for entry in pubkeyEndpointPairs)
+        return result
+        
+    except subprocess.CalledProcessError as ex:
+        raise SystemExit(f"wg show failed for {interface}: {ex.stderr or ex}")
+
 def get_current_peers(interface: str) -> Dict[str, str | None]:
     """
     Return set of public keys currently configured on the interface.

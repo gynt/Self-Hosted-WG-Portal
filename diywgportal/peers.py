@@ -39,6 +39,7 @@ Note: keys are NOT generated here—this is just a registry. Generate keys with 
 """
 
 import argparse
+import logging
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
@@ -93,25 +94,31 @@ def add_peer(conn: sqlite3.Connection, **kw):
     conn.commit()
 
 def update_peer(conn: sqlite3.Connection, id: str, **kw):
-    now = now_string()
+    # if "created_at" in kw:
+    #     logging.log(logging.ERROR, "cannot update 'created_at'")
+    #     raise Exception("cannot update 'created_at'")        
+    kw_items = sorted(kw.items(), key=lambda x: x[0])
+    kw_values = [value for _, value in kw_items] + [id]
+    dyn_query = ', '.join(f"{field}=?" for field, _ in kw_items)
+    log_statement = ', '.join(f"{field}={value}" for field, value in kw_items)
+    logging.log(logging.INFO, f"updating peer #{id}: {log_statement}")
     conn.execute(
-    """UPDATE peers SET
-        interface=?, name=?, public_key=?, preshared_key=?, allowed_ips=?, persistent_keepalive=?, enabled=?, created_at=?, client_ip=?, permanent=?
+    f"""UPDATE peers SET
+        {dyn_query}
         WHERE id =?
         """,
     (
-        kw["interface"], kw["name"], kw["public_key"],
-        kw.get("preshared_key"),
-        kw["allowed_ips"],
-        kw.get("persistent_keepalive"),
-        1 if kw.get("enabled", True) else 0,
-        now,
-        kw.get("client_ip"),
-        1 if kw.get("permanent", True) else 0,
-        id
+        *kw_values,
     ),
     )
     conn.commit()
+
+def get_peer_id(conn: sqlite3.Connection, interface: str, name: str):
+    cur = conn.execute("SELECT id FROM peers WHERE name = ? AND interface = ?", (name, interface, ))
+    rows = cur.fetchall()
+    if len(rows) > 0:
+        return str(rows[0][0])
+    return None
 
 def update_or_insert_peer(conn: sqlite3.Connection, interface: str, name: str, **kw):
     cur = conn.execute("SELECT id FROM peers WHERE name = ? AND interface = ?", (name, interface, ))
@@ -140,7 +147,7 @@ def set_enabled(conn: sqlite3.Connection, interface: str, enabled: bool, name: s
     conn.commit()
 
 def list_peers(conn: sqlite3.Connection, interface: str | None = None, only_enabled: bool = False):
-    q = "SELECT interface, name, public_key, COALESCE(preshared_key,''), allowed_ips, COALESCE(persistent_keepalive,''), enabled, created_at FROM peers"
+    q = "SELECT interface, name, public_key, COALESCE(preshared_key,''), allowed_ips, COALESCE(persistent_keepalive,''), enabled, created_at, permanent, COALESCE(client_ip,'') FROM peers"
     conds = []
     args = []
     if interface:
